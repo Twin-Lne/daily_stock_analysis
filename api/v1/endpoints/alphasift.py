@@ -116,14 +116,7 @@ def alphasift_screen(
 ) -> Dict[str, Any]:
     _ensure_alphasift_enabled(config)
 
-    try:
-        alphasift = _import_alphasift()
-    except HTTPException as exc:
-        detail = exc.detail if isinstance(exc.detail, dict) else {}
-        if detail.get("error") != "alphasift_unavailable":
-            raise
-        _install_alphasift(config)
-        alphasift = _import_alphasift()
+    alphasift = _import_alphasift()
     screen = getattr(alphasift, "screen", None)
     if not callable(screen):
         raise HTTPException(

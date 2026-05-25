@@ -69,12 +69,11 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 403)
         self.assertEqual(caught.exception.detail["error"], "alphasift_disabled")
 
-    def test_screen_reports_alphasift_install_failure(self) -> None:
+    def test_screen_rejects_when_alphasift_unavailable(self) -> None:
         config = self._config(enabled=True)
-        completed = SimpleNamespace(returncode=1, stdout="", stderr="not found")
 
         with (
-            patch("api.v1.endpoints.alphasift.subprocess.run", return_value=completed),
+            patch("api.v1.endpoints.alphasift.subprocess.run") as run_mock,
             patch("api.v1.endpoints.alphasift._import_alphasift", side_effect=_raise_alphasift_unavailable),
         ):
             with self.assertRaises(HTTPException) as caught:
@@ -82,60 +81,22 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
 
         self.assertEqual(caught.exception.status_code, 424)
         payload = caught.exception.detail
-        self.assertEqual(payload["error"], "alphasift_install_failed")
+        self.assertEqual(payload["error"], "alphasift_unavailable")
         self.assertIn("AlphaSift", payload["message"])
+        run_mock.assert_not_called()
 
-    def test_screen_rejects_pypi_placeholder_without_running_pip(self) -> None:
-        config = self._config(enabled=True, install_spec="alphasift")
-
+    def test_screen_rejects_unavailable_without_install_side_effect(self) -> None:
+        config = self._config(enabled=True)
         with (
             patch("api.v1.endpoints.alphasift.subprocess.run") as run_mock,
             patch("api.v1.endpoints.alphasift._import_alphasift", side_effect=_raise_alphasift_unavailable),
         ):
             with self.assertRaises(HTTPException) as caught:
-                self._screen(config)
+                self._screen(config, market="cn", strategy="dual_low", max_results=5)
 
         self.assertEqual(caught.exception.status_code, 424)
-        self.assertEqual(caught.exception.detail["error"], "alphasift_install_spec_missing")
+        self.assertEqual(caught.exception.detail["error"], "alphasift_unavailable")
         run_mock.assert_not_called()
-
-    def test_screen_rejects_untrusted_install_spec_without_running_pip(self) -> None:
-        config = self._config(enabled=True, install_spec="git+https://example.com/evil/alphasift.git")
-
-        with (
-            patch("api.v1.endpoints.alphasift.subprocess.run") as run_mock,
-            patch("api.v1.endpoints.alphasift._import_alphasift", side_effect=_raise_alphasift_unavailable),
-        ):
-            with self.assertRaises(HTTPException) as caught:
-                self._screen(config)
-
-        self.assertEqual(caught.exception.status_code, 403)
-        self.assertEqual(caught.exception.detail["error"], "alphasift_install_spec_not_allowed")
-        run_mock.assert_not_called()
-
-    def test_screen_auto_installs_alphasift_package_when_enabled(self) -> None:
-        config = self._config(enabled=True)
-        fake_module = SimpleNamespace(
-            screen=MagicMock(return_value=[{"code": "600519", "name": "Kweichow Moutai", "score": 88.5}])
-        )
-        completed = SimpleNamespace(returncode=0, stdout="installed", stderr="")
-
-        with (
-            patch("api.v1.endpoints.alphasift.subprocess.run", return_value=completed) as run_mock,
-            patch(
-                "api.v1.endpoints.alphasift._import_alphasift",
-                side_effect=[
-                    _alphasift_unavailable(),
-                    _alphasift_unavailable(),
-                    fake_module,
-                    fake_module,
-                ],
-            ),
-        ):
-            payload = self._screen(config, market="cn", strategy="dual_low", max_results=5)
-
-        self.assertEqual(payload["candidate_count"], 1)
-        run_mock.assert_called_once()
 
     def test_install_rejects_when_disabled_without_side_effects(self) -> None:
         config = self._config(enabled=False)
