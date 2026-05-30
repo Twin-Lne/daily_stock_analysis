@@ -944,6 +944,60 @@ describe('SettingsPage', () => {
             },
           },
           {
+            key: 'LITELLM_MODEL',
+            value: 'gpt-5.0',
+            rawValueExists: true,
+            isMasked: false,
+            schema: {
+              key: 'LITELLM_MODEL',
+              category: 'ai_model',
+              dataType: 'string',
+              uiControl: 'text',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: {},
+              displayOrder: 2,
+            },
+          },
+          {
+            key: 'OPENAI_BASE_URL',
+            value: 'https://api.openai.com/v1',
+            rawValueExists: true,
+            isMasked: false,
+            schema: {
+              key: 'OPENAI_BASE_URL',
+              category: 'ai_model',
+              dataType: 'string',
+              uiControl: 'text',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: {},
+              displayOrder: 3,
+            },
+          },
+          {
+            key: 'OPENAI_MODEL',
+            value: 'gpt-5.0',
+            rawValueExists: true,
+            isMasked: false,
+            schema: {
+              key: 'OPENAI_MODEL',
+              category: 'ai_model',
+              isMasked: false,
+              dataType: 'string',
+              uiControl: 'text',
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: {},
+              displayOrder: 4,
+            },
+          },
+          {
             key: 'LLM_MY_PROXY_API_KEY',
             value: 'sk-test',
             rawValueExists: true,
@@ -985,9 +1039,16 @@ describe('SettingsPage', () => {
 
     render(<SettingsPage />);
 
-    expect(await screen.findByTestId('llm-channel-editor-items')).toHaveTextContent(
-      'LLM_CHANNELS,LLM_MY_PROXY_API_KEY,LLM_MY_PROXY_MODELS',
-    );
+    const llmEditorItems = await screen.findByTestId('llm-channel-editor-items');
+    expect(llmEditorItems).toHaveTextContent('LLM_CHANNELS');
+    expect(llmEditorItems).toHaveTextContent('LITELLM_MODEL');
+    expect(llmEditorItems).toHaveTextContent('OPENAI_BASE_URL');
+    expect(llmEditorItems).toHaveTextContent('OPENAI_MODEL');
+    expect(llmEditorItems).toHaveTextContent('LLM_MY_PROXY_API_KEY');
+    expect(llmEditorItems).toHaveTextContent('LLM_MY_PROXY_MODELS');
+    expect(screen.queryByTestId('settings-field-LITELLM_MODEL')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('settings-field-OPENAI_BASE_URL')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('settings-field-OPENAI_MODEL')).not.toBeInTheDocument();
     expect(screen.queryByTestId('settings-field-LLM_MY_PROXY_API_KEY')).not.toBeInTheDocument();
     expect(screen.queryByTestId('settings-field-LLM_MY_PROXY_MODELS')).not.toBeInTheDocument();
   });
