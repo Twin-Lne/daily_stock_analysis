@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] #1381 个股分析新增按当日/市场复用的大盘环境摘要，普通 Pipeline 与 Agent 分析 Prompt 可读取低敏大盘背景，并在高风险/退潮环境下软化激进买入建议。
 - [文档] #1381 PR 描述与验收项已收敛：本轮仅补齐后端上下文注入与保守护栏，不包含独立 API、Web 阶段结果独立展示、四阶段日报结构化持久化或新增日报状态表。
 - [测试] #1381 回归覆盖：`pytest -q tests/test_main_schedule_mode.py tests/test_daily_market_context.py tests/test_daily_market_context_guardrail.py tests/test_agent_executor.py`，通过 86 个用例。覆盖点包含 schedule 模式下目标日参数与多市场上下文复用、`--no-market-review` 禁止复用生成、市场复盘锁复用、`MarketContext` 只读回退、Agent 单次注入路径与单次护栏应用。
-- [文档] #1381 兼容边界补充：本 PR 不改变 `provider/model/base_url`、默认模型及配置清理/回填迁移语义，仅复用既有 LLM 配置链路；官方配置语义与回退边界沿用 `LiteLLM OpenAI-compatible` 与 `OpenAI Chat Completion API` 兼容口径，回滚方式为常规发布回滚；核验依据为未改动 `.env` 显示/保存链路及 `config`/`system config` 相关 migration 或清理实现。  
+- [文档] #1381 兼容边界补充：本 PR 不改变 `provider/model/base_url`、默认模型及配置清理/回填迁移语义，仅复用既有 LLM 配置链路；官方配置语义与回退边界沿用 `LiteLLM OpenAI-compatible` 与 `OpenAI Chat Completion API`。核验路径明确为：本轮未新增配置写入分支且未改动 `.env` 保存/清理链路，`main.py`、`src/core/pipeline.py`、`src/analyzer.py`、`src/agent/executor.py`、`src/agent/agents/base_agent.py`、`src/services/daily_market_context.py`、`src/daily_market_context_guardrail.py` 仅复用现有配置链路；回归可复核 `tests/test_system_config_service.py`、`tests/test_system_config_api.py`、`tests/test_llm_channel_config.py`、`tests/test_market_review_runtime.py`。回滚方式为常规发布回滚。  
 - [文档] #1381 验收边界补充：本轮仅改后端分析 runtime，不涉及 `api/**`、`apps/dsa-web/**`、`apps/dsa-desktop/**`，故不再执行 Web 前端展示/日报状态表相关验收，CI 覆盖以 backend-gate 与 `tests/test_main_schedule_mode.py` / `tests/test_daily_market_context.py` / `tests/test_daily_market_context_guardrail.py` / `tests/test_agent_executor.py` 为准。
 
 ## [3.20.0] - 2026-06-03
