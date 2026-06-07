@@ -521,7 +521,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
 
             refresh.assert_called_once_with(config)
         self.assertEqual(events[:2], ["refresh", "pipeline"])
-        self.assertFalse(pipeline_kwargs["daily_market_context_allow_generate"])
+        self.assertTrue(pipeline_kwargs["daily_market_context_allow_generate"])
         pipeline.run.assert_called_once()
         run_market_review.assert_not_called()
 
@@ -550,7 +550,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
              patch("src.core.market_review.run_market_review") as run_market_review:
             main.run_full_analysis(config, args, [])
 
-        self.assertEqual(pipeline_kwargs["daily_market_context_allow_generate"], False)
+        self.assertFalse(pipeline_kwargs["daily_market_context_allow_generate"])
         self.assertEqual(pipeline_kwargs["daily_market_context_enabled"], False)
         prime_context.assert_not_called()
         run_market_review.assert_not_called()
@@ -590,7 +590,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
              patch("src.core.market_review.run_market_review") as run_market_review:
             main.run_full_analysis(config, args, [])
 
-        self.assertEqual(pipeline_kwargs["daily_market_context_allow_generate"], False)
+        self.assertTrue(pipeline_kwargs["daily_market_context_allow_generate"])
         prime_context.assert_has_calls(
             [
                 unittest.mock.call(
@@ -653,7 +653,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
              patch("src.core.market_review.run_market_review") as run_market_review:
             main.run_full_analysis(config, args, [])
 
-        self.assertEqual(pipeline_kwargs["daily_market_context_allow_generate"], False)
+        self.assertTrue(pipeline_kwargs["daily_market_context_allow_generate"])
         prime_context.assert_has_calls(
             [
                 unittest.mock.call(
@@ -761,7 +761,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
              patch("src.core.market_review.run_market_review") as run_market_review:
             main.run_full_analysis(config, args, [])
 
-        self.assertEqual(pipeline_kwargs["daily_market_context_allow_generate"], False)
+        self.assertTrue(pipeline_kwargs["daily_market_context_allow_generate"])
         self.assertEqual(events, ["pipeline", "stock-run", "market-review"])
         prime_context.assert_has_calls(
             [
@@ -822,7 +822,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
              patch("src.core.market_review.run_market_review") as run_market_review:
             main.run_full_analysis(config, args, [])
 
-        self.assertEqual(pipeline_kwargs["daily_market_context_allow_generate"], False)
+        self.assertTrue(pipeline_kwargs["daily_market_context_allow_generate"])
         prime_context.assert_has_calls(
             [
                 unittest.mock.call(
@@ -887,7 +887,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
              patch("src.core.market_review.run_market_review") as run_market_review:
             main.run_full_analysis(config, args, [])
 
-        self.assertEqual(pipeline_kwargs["daily_market_context_allow_generate"], False)
+        self.assertTrue(pipeline_kwargs["daily_market_context_allow_generate"])
         self.assertEqual(events, ["pipeline", "stock-run", "market-review"])
         self.assertEqual(sleep.call_count, 1)
         sleep.assert_called_once_with(2)
@@ -962,7 +962,7 @@ class MainScheduleModeTestCase(unittest.TestCase):
              patch("src.core.market_review.run_market_review") as run_market_review:
             main.run_full_analysis(config, args, [])
 
-        self.assertEqual(pipeline_kwargs["daily_market_context_allow_generate"], False)
+        self.assertTrue(pipeline_kwargs["daily_market_context_allow_generate"])
         prime_context.assert_has_calls(
             [
                 unittest.mock.call(

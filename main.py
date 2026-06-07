@@ -667,7 +667,7 @@ def run_full_analysis(
             query_source="cli",
             save_context_snapshot=save_context_snapshot,
             daily_market_context_enabled=not getattr(args, 'no_market_review', False),
-            daily_market_context_allow_generate=False,
+            daily_market_context_allow_generate=should_generate_market_context,
         )
         if should_generate_market_context:
             # Prompt-side context can reuse historical summaries, while full-merge
