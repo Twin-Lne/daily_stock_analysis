@@ -14,6 +14,8 @@ from .base import BaseFetcher, DataFetchError, STANDARD_COLUMNS, normalize_stock
 
 logger = logging.getLogger(__name__)
 
+_MAX_KLINE_BARS = 800
+
 
 class TencentFetcher(BaseFetcher):
     """Fetch qfq daily K-line data from Tencent's direct quote endpoint."""
@@ -46,6 +48,20 @@ class TencentFetcher(BaseFetcher):
             return _empty_daily_frame()
 
         df = pd.DataFrame(rows)
+        first_returned_date = _first_returned_date(df)
+        if first_returned_date and _is_capped_history_incomplete(
+            first_returned_date=first_returned_date,
+            start_date=start_date,
+            lookback=lookback,
+        ):
+            logger.info(
+                "TencentFetcher incomplete capped daily history for %s: first_date=%s requested_start=%s",
+                stock_code,
+                first_returned_date,
+                start_date,
+            )
+            return _empty_daily_frame()
+
         df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
         if df.empty:
             logger.info(
@@ -87,11 +103,31 @@ def _estimate_lookback_days(*, start_date: str, end_date: str) -> int:
     except ValueError:
         calendar_days = 90
     # Trading days are sparse over calendar days; add margin for holidays/suspensions.
-    return max(30, min(800, int(calendar_days * 1.8) + 20))
+    return max(30, min(_MAX_KLINE_BARS, int(calendar_days * 1.8) + 20))
 
 
 def _empty_daily_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=STANDARD_COLUMNS)
+
+
+def _first_returned_date(df: pd.DataFrame) -> Optional[str]:
+    if "date" not in df.columns or df.empty:
+        return None
+    dates = pd.to_datetime(df["date"], errors="coerce").dropna()
+    if dates.empty:
+        return None
+    return dates.min().strftime("%Y-%m-%d")
+
+
+def _is_capped_history_incomplete(*, first_returned_date: str, start_date: str, lookback: int) -> bool:
+    if lookback < _MAX_KLINE_BARS:
+        return False
+    try:
+        first = datetime.strptime(first_returned_date, "%Y-%m-%d")
+        requested_start = datetime.strptime(start_date, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return first > requested_start
 
 
 def _extract_kline_rows(payload: dict[str, Any], *, symbol: str) -> list[dict[str, Any]]:

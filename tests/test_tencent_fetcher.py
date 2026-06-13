@@ -107,3 +107,35 @@ def test_tencent_fetcher_returns_empty_frame_for_empty_history() -> None:
         df = TencentFetcher().get_daily_data("000001", start_date="2026-05-01", end_date="2026-05-10")
 
     assert df.empty
+
+
+def test_tencent_fetcher_rejects_capped_incomplete_history() -> None:
+    payload = {
+        "data": {
+            "sz000001": {
+                "qfqday": [
+                    ["2023-01-03", "10.00", "10.50", "10.80", "9.90", "12345", "67890"],
+                    ["2023-01-04", "10.50", "10.70", "10.90", "10.30", "22345", "77890"],
+                ]
+            }
+        }
+    }
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return payload
+
+    captured = {}
+
+    def fake_get(url, **kwargs):
+        captured.update(kwargs)
+        return FakeResponse()
+
+    with patch("data_provider.tencent_fetcher.requests.get", fake_get):
+        df = TencentFetcher().get_daily_data("000001", start_date="2020-01-01", end_date="2026-05-10")
+
+    assert ",800," in captured["params"]["param"]
+    assert df.empty
