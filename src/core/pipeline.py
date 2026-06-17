@@ -25,7 +25,7 @@ import pandas as pd
 from src.config import FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT, get_config, Config
 from src.storage import get_db
 from data_provider import DataFetcherManager
-from data_provider.base import normalize_stock_code
+from data_provider.base import is_bse_code, normalize_stock_code
 from data_provider.realtime_types import ChipDistribution
 from src.analyzer import (
     GeminiAnalyzer,
@@ -91,6 +91,68 @@ logger = logging.getLogger(__name__)
 # double-check 初始化 _single_stock_notify_lock 仍然线程安全。
 _SINGLE_STOCK_NOTIFY_LOCK_INIT_GUARD = threading.Lock()
 _DAILY_MARKET_CONTEXT_SERVICE_LOCK_INIT_GUARD = threading.Lock()
+
+
+def _symbol_scope_lookup_values(code: str, market: str) -> List[str]:
+    """Return accepted persisted-intelligence symbol spellings for lookup."""
+    raw = str(code or "").strip()
+    normalized = normalize_stock_code(raw) if raw else ""
+    values: List[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        text = str(value or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            values.append(text)
+
+    def add_case_variants(value: str) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        add(text)
+        add(text.upper())
+        add(text.lower())
+
+    add_case_variants(normalized)
+    add_case_variants(raw)
+
+    normalized_upper = normalized.upper()
+    if normalized_upper.startswith("HK") and normalized_upper[2:].isdigit():
+        digits = normalized_upper[2:]
+        trimmed_digits = digits.lstrip("0") or digits
+        add_case_variants(normalized_upper)
+        add_case_variants(f"{trimmed_digits}.HK")
+        add_case_variants(f"{digits}.HK")
+        return values
+
+    if (market or "").strip().lower() != "cn":
+        return values
+    if not (normalized.isdigit() and len(normalized) == 6):
+        return values
+
+    raw_upper = raw.upper()
+    exchange = ""
+    if raw_upper.startswith(("SH", "SS")) or raw_upper.endswith((".SH", ".SS")):
+        exchange = "SH"
+    elif raw_upper.startswith("SZ") or raw_upper.endswith(".SZ"):
+        exchange = "SZ"
+    elif raw_upper.startswith("BJ") or raw_upper.endswith(".BJ"):
+        exchange = "BJ"
+    elif is_bse_code(normalized):
+        exchange = "BJ"
+    elif normalized.startswith(("5", "6", "9")):
+        exchange = "SH"
+    else:
+        exchange = "SZ"
+
+    add_case_variants(f"{exchange}{normalized}")
+    add_case_variants(f"{exchange}.{normalized}")
+    add_case_variants(f"{normalized}.{exchange}")
+    if exchange == "SH":
+        add_case_variants(f"SS.{normalized}")
+        add_case_variants(f"{normalized}.SS")
+    return values
 
 
 class StockAnalysisPipeline:
@@ -2258,11 +2320,11 @@ class StockAnalysisPipeline:
             days = max(1, int(getattr(self.config, "news_max_age_days", 3) or 3))
             collected: list[Dict[str, Any]] = []
             seen_urls: set[str] = set()
-            for filters in (
-                {"scope_type": "symbol", "scope_value": normalize_stock_code(code), "market": market},
-                {"scope_type": "symbol", "scope_value": code, "market": market},
-                {"scope_type": "market", "market": market},
-            ):
+            symbol_filters = [
+                {"scope_type": "symbol", "scope_value": scope_value, "market": market}
+                for scope_value in _symbol_scope_lookup_values(code, market)
+            ]
+            for filters in symbol_filters + [{"scope_type": "market", "market": market}]:
                 payload = service.list_items(published_days=days, page=1, page_size=limit, **filters)
                 for item in payload.get("items", []):
                     if not isinstance(item, dict):

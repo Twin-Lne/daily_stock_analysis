@@ -73,6 +73,51 @@ class PersistedIntelligenceAnalysisIntegrationTestCase(unittest.TestCase):
         self.assertIn("Company wins major AI order", context)
         self.assertIn("https://news.example.com/symbol", context)
 
+    def test_pipeline_loads_symbol_intelligence_with_exchange_alias_scope(self) -> None:
+        repo = IntelligenceRepository()
+        now = datetime.now()
+        repo.upsert_items([
+            {
+                "source_name": "symbol-feed",
+                "source_type": "rss",
+                "title": "SH-prefixed symbol feed",
+                "summary": "Prefixed source should match normalized analysis code.",
+                "url": "https://news.example.com/symbol-sh-prefix",
+                "source": "symbol-feed",
+                "published_at": now,
+                "fetched_at": now,
+                "scope_type": "symbol",
+                "scope_value": "SH600519",
+                "market": "cn",
+            },
+            {
+                "source_name": "symbol-feed",
+                "source_type": "rss",
+                "title": "SH-suffixed symbol feed",
+                "summary": "Suffixed source should match normalized analysis code.",
+                "url": "https://news.example.com/symbol-sh-suffix",
+                "source": "symbol-feed",
+                "published_at": now,
+                "fetched_at": now,
+                "scope_type": "symbol",
+                "scope_value": "600519.SH",
+                "market": "cn",
+            },
+        ])
+
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.config = self.config
+        context = pipeline._load_persisted_intelligence_context(
+            code="600519",
+            stock_name="贵州茅台",
+            market="cn",
+        )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertIn("SH-prefixed symbol feed", context)
+        self.assertIn("SH-suffixed symbol feed", context)
+
     def test_market_review_merges_persisted_market_intelligence(self) -> None:
         analyzer = MarketAnalyzer(config=self.config, region="cn")
         merged = analyzer._merge_persisted_market_intelligence([])
