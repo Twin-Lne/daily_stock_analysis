@@ -9,7 +9,7 @@ import threading
 import _thread
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from src.config import Config, get_config
 from src.scheduler import Scheduler, normalize_schedule_times
@@ -19,6 +19,20 @@ CLI_SCHEDULER_OWNER_ENV = "DSA_CLI_SCHEDULER_OWNS_SCHEDULE"
 RUNTIME_SCHEDULER_FORCE_ENABLED_ENV = "DSA_RUNTIME_SCHEDULER_FORCE_ENABLED"
 RUNTIME_SCHEDULER_RUN_IMMEDIATELY_ENV = "DSA_RUNTIME_SCHEDULER_RUN_IMMEDIATELY"
 RUNTIME_SCHEDULER_SUPPRESS_START_ENV = "DSA_RUNTIME_SCHEDULER_SUPPRESS_START"
+
+
+def _agent_event_monitor_interval_seconds(config: Config) -> int:
+    """Return the validated Event Monitor polling interval in seconds."""
+    interval_minutes = getattr(config, "agent_event_monitor_interval_minutes", 5)
+    try:
+        interval_minutes = max(1, int(interval_minutes))
+    except (TypeError, ValueError):  # pragma: no cover - defensive branch
+        logger.warning(
+            "Invalid AGENT_EVENT_MONITOR_INTERVAL_MINUTES=%r; use fallback 5",
+            interval_minutes,
+        )
+        interval_minutes = 5
+    return interval_minutes * 60
 
 
 def build_agent_event_monitor_background_tasks(
@@ -32,15 +46,7 @@ def build_agent_event_monitor_background_tasks(
 
     from src.services.alert_worker import AlertWorker
 
-    interval_minutes = getattr(config, "agent_event_monitor_interval_minutes", 5)
-    try:
-        interval_minutes = max(1, int(interval_minutes))
-    except (TypeError, ValueError):  # pragma: no cover - defensive branch
-        logger.warning(
-            "Invalid AGENT_EVENT_MONITOR_INTERVAL_MINUTES=%r; use fallback 5",
-            interval_minutes,
-        )
-        interval_minutes = 5
+    interval_seconds = _agent_event_monitor_interval_seconds(config)
     try:
         alert_worker = AlertWorker(config_provider=config_provider)
     except Exception as exc:  # pragma: no cover - defensive branch
@@ -55,7 +61,7 @@ def build_agent_event_monitor_background_tasks(
 
     return [{
         "task": event_monitor_task,
-        "interval_seconds": interval_minutes * 60,
+        "interval_seconds": interval_seconds,
         "run_immediately": True,
         "name": "agent_event_monitor",
     }]
@@ -87,6 +93,8 @@ class RuntimeSchedulerService:
         self._force_enabled = force_enabled
         self._run_immediately_in_background = run_immediately_in_background
         self._background_tasks_provider = background_tasks_provider
+        self._background_task_cache: Dict[str, Dict[str, Any]] = {}
+        self._background_task_registered_names: Set[str] = set()
         self._lock = threading.RLock()
         self._run_lock = threading.Lock()
         self._scheduler: Optional[Scheduler] = None
@@ -97,7 +105,6 @@ class RuntimeSchedulerService:
         self._last_error: Optional[str] = None
         self._last_skipped_at: Optional[str] = None
         self._last_skip_reason: Optional[str] = None
-        self._background_task_signatures: Dict[str, tuple] = {}
 
     @staticmethod
     def _make_schedule_args() -> SimpleNamespace:
@@ -167,31 +174,43 @@ class RuntimeSchedulerService:
     def _current_background_tasks(self, config: Config) -> List[Dict[str, Any]]:
         if self._background_tasks_provider is not None:
             return self._background_tasks_provider(config)
-        return build_agent_event_monitor_background_tasks(
-            config,
-            config_provider=self._reload_config,
-        )
+        return self._current_agent_event_monitor_background_tasks(config)
 
-    @staticmethod
-    def _task_signature(entry: Dict[str, Any]) -> tuple[str, int, bool]:
-        name = entry.get("name") or getattr(entry["task"], "__name__", "background_task")
-        try:
-            interval_seconds = int(entry.get("interval_seconds", 0))
-        except (TypeError, ValueError):  # pragma: no cover - defensive branch
-            interval_seconds = 0
-        return (
-            str(name),
-            max(30, interval_seconds),
-            bool(entry.get("run_immediately", False)),
-        )
+    def _current_agent_event_monitor_background_tasks(self, config: Config) -> List[Dict[str, Any]]:
+        name = "agent_event_monitor"
+        if not getattr(config, "agent_event_monitor_enabled", False):
+            self._background_task_cache.pop(name, None)
+            self._background_task_registered_names.discard(name)
+            return []
 
-    @staticmethod
-    def _collect_task_signatures(tasks: List[Dict[str, Any]]) -> Dict[str, tuple]:
-        signatures: Dict[str, tuple] = {}
-        for task in tasks:
-            signature = RuntimeSchedulerService._task_signature(task)
-            signatures[signature[0]] = signature
-        return signatures
+        cached = self._background_task_cache.get(name)
+        if cached is None:
+            entries = build_agent_event_monitor_background_tasks(
+                config,
+                config_provider=self._reload_config,
+            )
+            if not entries:
+                self._background_task_cache.pop(name, None)
+                self._background_task_registered_names.discard(name)
+                return []
+            cached = dict(entries[0])
+            cached["name"] = name
+            self._background_task_cache[name] = cached
+            interval_seconds = int(cached["interval_seconds"])
+        else:
+            interval_seconds = _agent_event_monitor_interval_seconds(config)
+
+        run_immediately = (
+            bool(cached.get("run_immediately", False))
+            and name not in self._background_task_registered_names
+        )
+        self._background_task_registered_names.add(name)
+        return [{
+            "task": cached["task"],
+            "interval_seconds": interval_seconds,
+            "run_immediately": run_immediately,
+            "name": name,
+        }]
 
     @staticmethod
     def _run_in_background_thread(target: Callable[[], None]) -> None:
@@ -212,11 +231,9 @@ class RuntimeSchedulerService:
                 return
             config = self._config_provider()
             if not self._is_schedule_enabled(config):
-                self._background_task_signatures = {}
                 self.stop()
                 return
             background_tasks = self._current_background_tasks(config)
-            next_background_task_signatures = self._collect_task_signatures(background_tasks)
             self.stop()
             times = normalize_schedule_times(
                 getattr(config, "schedule_times", None),
@@ -233,20 +250,12 @@ class RuntimeSchedulerService:
             else:
                 scheduler.set_daily_task(self._run_analysis_once, run_immediately=run_immediately)
             for entry in background_tasks:
-                task_name = str(entry.get("name") or getattr(entry["task"], "__name__", "background_task"))
-                if self._background_task_signatures.get(task_name) == self._task_signature(entry):
-                    logger.debug(
-                        "Skip duplicate runtime background task registration: %s",
-                        task_name,
-                    )
-                    continue
                 scheduler.add_background_task(
                     entry["task"],
                     interval_seconds=entry["interval_seconds"],
                     run_immediately=entry.get("run_immediately", False),
                     name=entry.get("name"),
                 )
-            self._background_task_signatures = next_background_task_signatures
             if run_immediately and self._run_immediately_in_background:
                 self._run_in_background_thread(self._run_analysis_once)
             thread = threading.Thread(

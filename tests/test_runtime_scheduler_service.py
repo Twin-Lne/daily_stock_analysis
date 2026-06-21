@@ -299,9 +299,8 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
         scheduler.background_tasks[0]["task"]()  # type: ignore[index]
         fake_worker.run_once.assert_called_once()
 
-    def test_rebuild_does_not_duplicate_event_monitor_background_task_registration(self) -> None:
-        created_schedulers = []
-        registration_log = []
+    def test_rebuild_reuses_event_monitor_without_immediate_rerun(self) -> None:
+        schedulers = []
 
         class _FakeScheduler:
             def __init__(self, **kwargs):
@@ -310,8 +309,7 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
                 self.daily_task = None
                 self.daily_task_run_immediately = None
                 self._jobs = []
-                self.stopped = False
-                created_schedulers.append(self)
+                schedulers.append(self)
 
             def set_daily_task(self, task, run_immediately: bool) -> None:
                 self.daily_task = task
@@ -324,7 +322,6 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
                 run_immediately: bool,
                 name: str | None = None,
             ) -> None:
-                registration_log.append((name, interval_seconds, run_immediately))
                 self.background_tasks.append({
                     "task": task,
                     "interval_seconds": interval_seconds,
@@ -336,7 +333,6 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
                 return None
 
             def stop(self) -> None:
-                self.stopped = True
                 return None
 
             @property
@@ -353,7 +349,7 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
                 return self.kwargs.get("schedule_time")
 
         fake_worker = MagicMock()
-        fake_worker.run_once.return_value = {"triggered": 2}
+        fake_worker.run_once.return_value = {"triggered": 0}
 
         config = SimpleNamespace(
             schedule_enabled=True,
@@ -372,16 +368,26 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
         ), patch(
             "src.services.runtime_scheduler.threading.Thread",
             _NoopThread,
-        ), patch("src.services.alert_worker.AlertWorker", return_value=fake_worker):
-            service.start()
-            config.schedule_times = ["15:10"]
-            service.start()
+        ), patch("src.services.alert_worker.AlertWorker", return_value=fake_worker) as worker_cls:
+            service.reconcile_from_config()
+            config.schedule_times = ["19:00"]
+            config.agent_event_monitor_interval_minutes = 11
+            service.reconcile_from_config()
+            config.schedule_times = ["20:00"]
+            service.reconcile_from_config()
 
-        self.assertEqual(len(created_schedulers), 2)
-        self.assertEqual(len(registration_log), 1)
-        self.assertEqual(registration_log[0], ("agent_event_monitor", 420, True))
-        self.assertEqual(len(created_schedulers[0].background_tasks), 1)
-        self.assertEqual(len(created_schedulers[1].background_tasks), 0)
+        self.assertEqual(worker_cls.call_count, 1)
+        self.assertEqual(len(schedulers), 3)
+        first_task = schedulers[0].background_tasks[0]
+        second_task = schedulers[1].background_tasks[0]
+        third_task = schedulers[2].background_tasks[0]
+        self.assertTrue(first_task["run_immediately"])
+        self.assertFalse(second_task["run_immediately"])
+        self.assertFalse(third_task["run_immediately"])
+        self.assertIs(first_task["task"], second_task["task"])
+        self.assertIs(first_task["task"], third_task["task"])
+        self.assertEqual(second_task["interval_seconds"], 11 * 60)
+        self.assertEqual(third_task["interval_seconds"], 11 * 60)
 
     def test_force_enabled_survives_time_reconcile_until_explicit_enabled_update(self) -> None:
         fake_schedule = _FakeScheduleModule()
