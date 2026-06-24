@@ -564,6 +564,21 @@ class BacktestRepository:
         raw_code_upper = raw_code.upper()
         normalized_upper = normalized_code.upper() if normalized_code else ""
 
+        def _add_us_variants(code: str) -> None:
+            if not code:
+                return
+            if code.endswith(".US"):
+                bare = code[:-3]
+                if bare.isalpha() and 1 <= len(bare) <= 5:
+                    variants.append(bare)
+                return
+            if "." not in code and code.isalpha() and 1 <= len(code) <= 5:
+                variants.append(f"{code}.US")
+
+        _add_us_variants(raw_code_upper)
+        if normalized_upper != raw_code_upper:
+            _add_us_variants(normalized_upper)
+
         def _explicit_exchange() -> Optional[str]:
             if raw_code_upper.startswith(("SH", "SS")) or raw_code_upper.endswith((".SH", ".SS")):
                 return "SH"

@@ -534,6 +534,11 @@ class BacktestServiceTestCase(unittest.TestCase):
         self.assertIn("BJ920748", bj_variants)
         self.assertIn("920748.BJ", bj_variants)
 
+        us_bare_variants = BacktestRepository._build_market_code_variants("AAPL", "AAPL")
+        self.assertIn("AAPL.US", us_bare_variants)
+        us_suffix_variants = BacktestRepository._build_market_code_variants("AAPL.US", "AAPL.US")
+        self.assertIn("AAPL", us_suffix_variants)
+
     def test_build_market_code_variants_rejects_hk_suffix_with_6_digit_base(self) -> None:
         invalid_variants = BacktestRepository._build_market_code_variants("600519.HK", "600519.HK")
         self.assertNotIn("600519", invalid_variants)
@@ -824,6 +829,215 @@ class BacktestServiceTestCase(unittest.TestCase):
         data = service.get_recent_evaluations(code="AAPL.US", eval_window_days=1, limit=10, page=1)
         self.assertEqual(data["items"][0]["code"], "AAPL.US")
         self.assertEqual(data["items"][0]["analysis_date"], "2024-01-03")
+
+    def test_run_backtest_us_suffix_query_matches_bare_history_and_summary(self) -> None:
+        self._seed_analysis(
+            query_id="q_aapl_bare_history",
+            code="AAPL",
+            analysis_date=date(2024, 1, 6),
+            created_at=datetime(2024, 1, 6, 0, 0, 0),
+            operation_advice="买入",
+            trend_prediction="看多",
+            start_close=100.0,
+            forward_bars=[
+                StockDaily(code="AAPL", date=date(2024, 1, 7), high=104.0, low=99.0, close=103.0),
+            ],
+        )
+
+        service = BacktestService(self.db)
+        stats = service.run_backtest(
+            code="AAPL.US",
+            force=False,
+            eval_window_days=1,
+            min_age_days=0,
+            analysis_date_from=date(2024, 1, 6),
+            analysis_date_to=date(2024, 1, 6),
+            limit=10,
+        )
+
+        self.assertEqual(stats["processed"], 1)
+        self.assertEqual(stats["saved"], 1)
+        self.assertEqual(stats["completed"], 1)
+
+        data = service.get_recent_evaluations(
+            code="AAPL.US",
+            eval_window_days=1,
+            limit=10,
+            page=1,
+            analysis_date_from=date(2024, 1, 6),
+            analysis_date_to=date(2024, 1, 6),
+        )
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["items"][0]["code"], "AAPL")
+
+        summary = service.get_summary(scope="stock", code="AAPL.US", eval_window_days=1)
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["code"], "AAPL")
+        self.assertEqual(summary["completed_count"], 1)
+
+    def test_run_backtest_bare_us_query_matches_us_suffix_history_and_summary(self) -> None:
+        self._seed_analysis(
+            query_id="q_aapl_suffix_history",
+            code="AAPL.US",
+            analysis_date=date(2024, 1, 8),
+            created_at=datetime(2024, 1, 8, 0, 0, 0),
+            operation_advice="买入",
+            trend_prediction="看多",
+            start_close=100.0,
+            forward_bars=[
+                StockDaily(code="AAPL.US", date=date(2024, 1, 9), high=104.0, low=99.0, close=103.0),
+            ],
+        )
+
+        service = BacktestService(self.db)
+        stats = service.run_backtest(
+            code="AAPL",
+            force=False,
+            eval_window_days=1,
+            min_age_days=0,
+            analysis_date_from=date(2024, 1, 8),
+            analysis_date_to=date(2024, 1, 8),
+            limit=10,
+        )
+
+        self.assertEqual(stats["processed"], 1)
+        self.assertEqual(stats["saved"], 1)
+        self.assertEqual(stats["completed"], 1)
+
+        data = service.get_recent_evaluations(
+            code="AAPL",
+            eval_window_days=1,
+            limit=10,
+            page=1,
+            analysis_date_from=date(2024, 1, 8),
+            analysis_date_to=date(2024, 1, 8),
+        )
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["items"][0]["code"], "AAPL.US")
+
+        summary = service.get_summary(scope="stock", code="AAPL", eval_window_days=1)
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["code"], "AAPL.US")
+        self.assertEqual(summary["completed_count"], 1)
+
+    def test_us_code_queries_match_legacy_results_without_rerun(self) -> None:
+        with self.db.get_session() as session:
+            bare_history = AnalysisHistory(
+                query_id="q_legacy_aapl_bare",
+                code="AAPL",
+                name="Apple",
+                report_type="simple",
+                sentiment_score=60,
+                operation_advice="买入",
+                trend_prediction="看多",
+                analysis_summary="legacy bare result",
+                created_at=datetime(2024, 1, 10, 0, 0, 0),
+                context_snapshot=json.dumps({"enhanced_context": {"date": "2024-01-10"}}),
+            )
+            suffix_history = AnalysisHistory(
+                query_id="q_legacy_aapl_suffix",
+                code="AAPL.US",
+                name="Apple",
+                report_type="simple",
+                sentiment_score=60,
+                operation_advice="买入",
+                trend_prediction="看多",
+                analysis_summary="legacy suffix result",
+                created_at=datetime(2024, 1, 11, 0, 0, 0),
+                context_snapshot=json.dumps({"enhanced_context": {"date": "2024-01-11"}}),
+            )
+            session.add_all([bare_history, suffix_history])
+            session.flush()
+            session.add_all(
+                [
+                    BacktestResult(
+                        analysis_history_id=bare_history.id,
+                        code="AAPL",
+                        analysis_date=date(2024, 1, 10),
+                        eval_window_days=1,
+                        engine_version="v1",
+                        eval_status="completed",
+                        evaluated_at=datetime(2024, 1, 20, 0, 0, 0),
+                        operation_advice="买入",
+                        position_recommendation="long",
+                        start_price=100.0,
+                        end_close=103.0,
+                        stock_return_pct=3.0,
+                        direction_expected="up",
+                        direction_correct=True,
+                        outcome="win",
+                        simulated_return_pct=3.0,
+                    ),
+                    BacktestResult(
+                        analysis_history_id=suffix_history.id,
+                        code="AAPL.US",
+                        analysis_date=date(2024, 1, 11),
+                        eval_window_days=1,
+                        engine_version="v1",
+                        eval_status="completed",
+                        evaluated_at=datetime(2024, 1, 21, 0, 0, 0),
+                        operation_advice="买入",
+                        position_recommendation="long",
+                        start_price=103.0,
+                        end_close=105.0,
+                        stock_return_pct=1.94,
+                        direction_expected="up",
+                        direction_correct=True,
+                        outcome="win",
+                        simulated_return_pct=1.94,
+                    ),
+                ]
+            )
+            session.commit()
+
+        service = BacktestService(self.db)
+        suffix_query = service.get_recent_evaluations(
+            code="AAPL.US",
+            eval_window_days=1,
+            limit=10,
+            page=1,
+            analysis_date_from=date(2024, 1, 10),
+            analysis_date_to=date(2024, 1, 10),
+        )
+        self.assertEqual(suffix_query["total"], 1)
+        self.assertEqual(suffix_query["items"][0]["code"], "AAPL")
+
+        suffix_summary = service.get_summary(
+            scope="stock",
+            code="AAPL.US",
+            eval_window_days=1,
+            analysis_date_from=date(2024, 1, 10),
+            analysis_date_to=date(2024, 1, 10),
+        )
+        self.assertIsNotNone(suffix_summary)
+        assert suffix_summary is not None
+        self.assertEqual(suffix_summary["code"], "AAPL.US")
+        self.assertEqual(suffix_summary["total_evaluations"], 1)
+
+        bare_query = service.get_recent_evaluations(
+            code="AAPL",
+            eval_window_days=1,
+            limit=10,
+            page=1,
+            analysis_date_from=date(2024, 1, 11),
+            analysis_date_to=date(2024, 1, 11),
+        )
+        self.assertEqual(bare_query["total"], 1)
+        self.assertEqual(bare_query["items"][0]["code"], "AAPL.US")
+
+        bare_summary = service.get_summary(
+            scope="stock",
+            code="AAPL",
+            eval_window_days=1,
+            analysis_date_from=date(2024, 1, 11),
+            analysis_date_to=date(2024, 1, 11),
+        )
+        self.assertIsNotNone(bare_summary)
+        assert bare_summary is not None
+        self.assertEqual(bare_summary["code"], "AAPL")
+        self.assertEqual(bare_summary["total_evaluations"], 1)
 
     def test_run_backtest_matches_hk_different_code_shapes_in_analysis_history_and_daily(self) -> None:
         with self.db.get_session() as session:

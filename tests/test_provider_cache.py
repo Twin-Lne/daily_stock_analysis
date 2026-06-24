@@ -359,7 +359,11 @@ def test_litellm_openai_prompt_cache_key_is_not_passed_through_without_verified_
             def log_message(self, *args):
                 return
 
-        server = HTTPServer(("127.0.0.1", 0), CaptureHandler)
+        try:
+            server = HTTPServer(("127.0.0.1", 0), CaptureHandler)
+        except PermissionError:
+            print("LOCAL_SOCKET_UNAVAILABLE")
+            raise SystemExit(77)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -391,6 +395,8 @@ def test_litellm_openai_prompt_cache_key_is_not_passed_through_without_verified_
         timeout=15,
     )
     if completed.returncode == 77:
+        if "LOCAL_SOCKET_UNAVAILABLE" in completed.stdout + completed.stderr:
+            pytest.skip("local loopback sockets are unavailable")
         pytest.skip("litellm is not installed")
     assert completed.returncode == 0, completed.stdout + completed.stderr
     captured_line = next(
